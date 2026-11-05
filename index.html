@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>日本語 · Japonés para el viaje</title>
+  <meta name="description" content="Aprende japonés de supervivencia para tu viaje: kana, frases, números y kanji con repasos espaciados.">
+  <meta name="theme-color" content="#f7f3ec" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#17151b" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="日本語">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top"><h1 id="title">日本語</h1></header>
+  <main id="view"></main>
+
+  <nav class="tabs">
+    <button data-tab="hoy"><span>🏠</span>Hoy</button>
+    <button data-tab="frases"><span>💬</span>Frases</button>
+    <button data-tab="kana"><span>あ</span>Kana</button>
+    <button data-tab="practica"><span>🎯</span>Práctica</button>
+    <button data-tab="ajustes"><span>⚙️</span>Ajustes</button>
+  </nav>
+
+  <div id="session" hidden>
+    <div class="ses-top">
+      <button class="x" data-act="quit" aria-label="Salir">✕</button>
+      <div class="progress"><i id="bar"></i></div>
+    </div>
+    <div id="card"></div>
+  </div>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
