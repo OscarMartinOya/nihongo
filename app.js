@@ -391,11 +391,12 @@ function renderSummary() {
   const pct = tot ? Math.round((SES.right / tot) * 100) : 100;
   const learned = SES.isNew.size;
   $('#card').innerHTML = `<div class="summary">
-    <div class="big-emoji">${pct >= 80 ? '🎉' : '💪'}</div>
+    <div class="stamp" lang="ja" aria-hidden="true">${pct >= 80 ? 'よく<br>でき<br>ました' : 'がんば<br>りま<br>しょう'}</div>
+    <p class="stamp-es">${pct >= 80 ? '«Muy bien hecho», el sello de los colegios japoneses' : '«Sigamos esforzándonos», el sello de los colegios japoneses'}</p>
     <h2>${SES.practice ? '¡Práctica terminada!' : '¡Sesión completada!'}</h2>
     <p>${SES.right} aciertos de ${tot} (${pct} %)</p>
     ${learned && !SES.practice ? `<p>Has aprendido <b>${learned}</b> cosas nuevas.</p>` : ''}
-    <p class="streak-line">🔥 Racha: <b>${currentStreak()}</b> ${currentStreak() === 1 ? 'día' : 'días'}</p>
+    <p class="streak-line">Racha: <b>${currentStreak()}</b> ${currentStreak() === 1 ? 'día' : 'días'}</p>
     <div class="foot"><button class="btn primary" data-act="close">Volver</button></div></div>`;
 }
 
@@ -410,7 +411,7 @@ function tripDays() {
   return isNaN(d) ? null : dayNum(d) - today();
 }
 function sectionStats() {
-  const secs = [['Hiragana', 'あ'], ['Katakana', 'ア'], ['Frases', '💬'], ['Vocabulario', '🍜'], ['Kanji', '漢']];
+  const secs = [['Hiragana', 'あ'], ['Katakana', 'ア'], ['Frases', '話'], ['Vocabulario', '単'], ['Kanji', '漢']];
   return secs.map(([name, ico]) => {
     const ids = PATH_OK.filter((u) => UNITS[u].sec === name).flatMap((u) => UNITS[u].items);
     const seen = ids.filter((id) => S.items[id]).length;
@@ -419,53 +420,83 @@ function sectionStats() {
   });
 }
 
+/* Cada sección del curso tiene su nombre japonés, como el cartel de una estación. */
+const SEC_JP = {
+  Hiragana: ['平仮名', 'ひらがな', 'hiragana'], Katakana: ['片仮名', 'かたかな', 'katakana'],
+  Frases: ['会話', 'かいわ', 'kaiwa'], Vocabulario: ['単語', 'たんご', 'tango'], Kanji: ['漢字', 'かんじ', 'kanji'],
+};
+const unitName = (u) => `${u.sec}: ${u.t}`;
+
+/* Unidad actual: la del siguiente elemento nuevo (o la última si ya se ha visto todo). */
+function currentStation() {
+  const next = nextNew(1)[0];
+  const id = next ? ITEMS[next].unit : PATH_OK[PATH_OK.length - 1];
+  return PATH_OK.indexOf(id);
+}
+
+function renderSign(i, finished) {
+  const u = UNITS[PATH_OK[i]];
+  const [kj, kana, ro] = SEC_JP[u.sec] || [u.sec, '', ''];
+  const prev = PATH_OK[i - 1] ? UNITS[PATH_OK[i - 1]] : null;
+  const next = PATH_OK[i + 1] ? UNITS[PATH_OK[i + 1]] : null;
+  return `<section class="sign" aria-label="Estás en ${esc(unitName(u))}">
+      <div class="sign-code" aria-hidden="true"><b>N</b>${String(i + 1).padStart(2, '0')}</div>
+      <div class="sign-kj" lang="ja">${kj}</div>
+      <div class="sign-kana" lang="ja">${kana}</div>
+      <div class="sign-ro">${ro}</div>
+      <div class="sign-es">${finished ? 'Final de línea: has visto todo el curso' : esc(u.t)}</div>
+      <div class="sign-band"><i></i></div>
+      <div class="sign-nb">
+        <span class="prev">${prev ? esc(prev.t) : ''}</span>
+        <span class="next">${next ? esc(next.t) : ''}</span>
+      </div>
+    </section>`;
+}
+
 function renderHoy() {
   const due = dueIds().length;
   const fresh = nextNew(newLeft()).length;
   const mins = Math.max(1, Math.ceil((due * 8 + fresh * 30) / 60));
-  const days = tripDays();
   const next = nextNew(1)[0];
-  const nextUnit = next ? UNITS[ITEMS[next].unit] : null;
-  const streak = currentStreak();
   const stats = sectionStats();
   const totalSeen = Object.keys(S.items).filter((id) => ITEMS[id]).length;
+  const plural = (n, a, b) => `${n} ${n === 1 ? a : b}`;
   let cta;
   if (due || fresh) {
+    const parts = [due && plural(due, 'repaso', 'repasos'), fresh && plural(fresh, 'nueva', 'nuevas')].filter(Boolean);
     cta = `<button class="btn primary xl" data-act="start">Empezar sesión</button>
-      <p class="muted center">${due} repasos · ${fresh} nuevas · ~${mins} min</p>`;
+      <p class="cta-sub">${parts.join(' y ')}, unos ${mins} min</p>`;
   } else {
-    cta = `<div class="done">✅ ¡Hecho por hoy! Vuelve mañana para repasar.</div>
+    cta = `<p class="done">Hecho por hoy. Mañana tendrás repasos nuevos.</p>
       ${next ? '<button class="btn" data-act="extra">Aprender 5 más</button>' : ''}`;
   }
   return `
-    <section class="hero">
-      <div class="countdown">${days === null ? '' : days > 0 ? `<b>${days}</b> días para Japón 🇯🇵` : days === 0 ? '¡Hoy viajas a Japón! 🇯🇵' : 'いってらっしゃい 🇯🇵'}</div>
-      <div class="streak">🔥 <b>${streak}</b> ${streak === 1 ? 'día' : 'días'} de racha</div>
-    </section>
-    <section class="card-box">${cta}
-      ${nextUnit ? `<p class="muted center">Siguiente: <b>${esc(nextUnit.sec)} · ${esc(nextUnit.t)}</b></p>` : '<p class="muted center">¡Has visto todo el curso! Sigue repasando.</p>'}
-    </section>
-    <section class="card-box">
-      <h3>Tu progreso <span class="muted">· ${totalSeen} de ${ALL_IDS.length}</span></h3>
-      ${stats.map((s) => `<div class="stat"><span class="ico">${s.ico}</span><div class="grow">
+    ${tripDays() !== null ? `<p class="trip-line">${tripDays() > 0 ? `Faltan <b>${tripDays()}</b> días para el viaje` : tripDays() === 0 ? 'Hoy viajas a Japón. いってらっしゃい' : 'Buen viaje. いってらっしゃい'}</p>` : ''}
+    ${renderSign(currentStation(), !next)}
+    <section class="cta">${cta}</section>
+    <section class="block">
+      <div class="block-h"><h3>Tu progreso</h3><span class="muted">${totalSeen} de ${ALL_IDS.length}</span></div>
+      ${stats.map((s) => `<div class="stat"><span class="ico" lang="ja" aria-hidden="true">${s.ico}</span><div class="grow">
         <div class="row"><span>${s.name}</span><span class="muted">${s.seen}/${s.total}</span></div>
         <div class="meter"><i class="seen" style="width:${(s.seen / s.total) * 100}%"></i><i class="strong" style="width:${(s.strong / s.total) * 100}%"></i></div>
       </div></div>`).join('')}
       <p class="legend"><i class="dot seen"></i> vistas <i class="dot strong"></i> dominadas</p>
     </section>
     ${renderWeek()}
-    ${!isStandalone() ? `<section class="card-box tip">📲 <b>Instálala:</b> en Safari pulsa <b>Compartir</b> → <b>Añadir a pantalla de inicio</b>. Funcionará sin conexión, como una app.</section>` : ''}`;
+    ${!isStandalone() ? `<section class="block tip"><b>Instálala en el iPhone:</b> en Safari pulsa Compartir y luego «Añadir a pantalla de inicio». Así funciona sin conexión, como una app.</section>` : ''}`;
 }
 function renderWeek() {
   const t = today();
   const names = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
+  const streak = currentStreak();
   let cells = '';
   for (let d = t - 6; d <= t; d++) {
     const n = S.hist[d] || 0;
     const wd = new Date(d * 86400000).getUTCDay();
     cells += `<div class="day ${n ? 'on' : ''} ${d === t ? 'today' : ''}"><i></i><span>${names[wd]}</span></div>`;
   }
-  return `<section class="card-box"><h3>Esta semana</h3><div class="week">${cells}</div></section>`;
+  return `<section class="block"><div class="block-h"><h3>Esta semana</h3>
+    <span class="muted">Racha: ${streak} ${streak === 1 ? 'día' : 'días'}</span></div><div class="week">${cells}</div></section>`;
 }
 
 function renderFrases() {
@@ -516,29 +547,30 @@ function renderKana() {
 function renderPractica() {
   const seen = Object.keys(S.items).filter((id) => ITEMS[id]).length;
   return `
-    <section class="card-box"><h3>💴 Precios</h3>
+    <section class="block"><h3>Precios</h3>
       <p class="muted">Lee y entiende precios en yenes, como en tiendas y restaurantes.</p>
       <div class="two"><button class="btn" data-act="price">Leer precios</button>
       <button class="btn" data-act="pricelisten" ${ttsOK() ? '' : 'disabled'}>Escuchar precios</button></div>
     </section>
-    <section class="card-box"><h3>🔁 Repaso libre</h3>
+    <section class="block"><h3>Repaso libre</h3>
       <p class="muted">15 preguntas al azar de lo que ya has visto. No cambia tu calendario de repasos.</p>
       <button class="btn" data-act="free" ${seen >= 4 ? '' : 'disabled'}>Practicar</button>
       ${seen < 4 ? '<p class="muted small">Disponible cuando hayas aprendido algo en «Hoy».</p>' : ''}
     </section>
-    <section class="card-box"><h3>🗺️ El curso</h3>
-      <ol class="path">${PATH_OK.map((u) => {
+    <section class="block"><h3>La línea del curso</h3>
+      <ol class="route">${PATH_OK.map((u, i) => {
         const un = UNITS[u];
         const s = un.items.filter((id) => S.items[id]).length;
         const st = s === un.items.length ? 'done' : s ? 'part' : '';
-        return `<li class="${st}"><span>${esc(un.sec)} · ${esc(un.t)}</span><span class="muted">${s}/${un.items.length}</span></li>`;
+        const here = i === currentStation() && s < un.items.length ? ' here' : '';
+        return `<li class="${st}${here}"><i aria-hidden="true"></i><span class="r-name">${esc(unitName(un))}</span><span class="muted">${s}/${un.items.length}</span></li>`;
       }).join('')}</ol>
     </section>`;
 }
 
 function renderAjustes() {
   return `
-    <section class="card-box form">
+    <section class="block form">
       <label>Fecha del viaje<input type="date" id="trip" value="${esc(S.trip)}"></label>
       <label>Cosas nuevas al día
         <select id="npd">${[3, 5, 7, 10, 15].map((n) => `<option ${S.newPerDay === n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
@@ -546,12 +578,12 @@ function renderAjustes() {
       <label class="chk"><input type="checkbox" id="auto" ${S.autoAudio ? 'checked' : ''}> Audio automático</label>
       ${ttsOK() ? `<button class="btn" data-act="testvoice">🔊 Probar voz${jaVoice ? ' (' + esc(jaVoice.name) + ')' : ''}</button>` : '<p class="muted">Este navegador no tiene voz japonesa.</p>'}
     </section>
-    <section class="card-box"><h3>Copia de seguridad</h3>
+    <section class="block"><h3>Copia de seguridad</h3>
       <p class="muted">Tu progreso se guarda solo en este móvil. Haz una copia de vez en cuando.</p>
       <div class="two"><button class="btn" data-act="export">Exportar</button><button class="btn" data-act="import">Importar</button></div>
       <input type="file" id="impfile" accept="application/json,.json" hidden>
     </section>
-    <section class="card-box"><h3>Zona peligrosa</h3>
+    <section class="block"><h3>Zona peligrosa</h3>
       <button class="btn danger" data-act="reset">Borrar todo el progreso</button></section>
     <p class="muted center small">日本語 · v1</p>`;
 }
