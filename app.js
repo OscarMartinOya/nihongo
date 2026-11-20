@@ -73,6 +73,20 @@ KANJI_UNITS.forEach((u) => {
 const PATH_OK = PATH.filter((u) => UNITS[u]);
 const ALL_IDS = PATH_OK.flatMap((u) => UNITS[u].items);
 
+/* ---------- claves de audio grabado ----------
+   Cada texto tiene un archivo audio/<clave>.mp3 (voz grabada). Los kana se leen en hiragana, así
+   ア y あ comparten audio. tools/audio-manifest.js usa estas mismas funciones para generar la lista. */
+const toHira = (s) => s.replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60));
+function audioText(it) {
+  const t = it.kind === 'kana' ? toHira(it.jp) : it.kind === 'kanji' ? it.kana.split(' / ')[0] : (it.kana || it.jp);
+  return t.replace(/[〜~]/g, '').trim();
+}
+function audioKey(text) { // FNV-1a de 32 bits, en hexadecimal
+  let h = 0x811c9dc5;
+  for (const ch of text) { h ^= ch.codePointAt(0); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(16).padStart(8, '0');
+}
+
 /* ---------- audio (voz japonesa del sistema) ---------- */
 let jaVoice = null;
 function loadVoices() {
@@ -98,6 +112,7 @@ function silentWavUrl() {
   return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
 }
 function unlockAudio() {
+  unlockVoice();
   if (!S.silentOk || document.hidden) return;
   try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) { /* no disponible */ }
   if (!silentEl) {
@@ -121,12 +136,46 @@ function speak(text, rate = 0.85) {
     toast('Este dispositivo no tiene voz japonesa, así que el audio puede sonar mal. Pon una en los ajustes de accesibilidad (contenido leído).');
   }
   speechSynthesis.cancel();
+  if (!voiceEl.paused) voiceEl.pause();
   const u = new SpeechSynthesisUtterance(text.replace(/[〜~]/g, ''));
   u.lang = 'ja-JP'; u.rate = rate;
   if (jaVoice) u.voice = jaVoice;
   speechSynthesis.speak(u);
 }
 const sayText = (it) => (it.kind === 'kanji' ? it.kana.split(' / ')[0] : (it.kana || it.jp));
+
+/* ---------- audio grabado (voz neuronal, archivos en audio/) ----------
+   Se reproduce como un audio normal, así suena aunque el iPhone esté en silencio. Se carga como blob
+   para que Safari no pida trozos (Range) al service worker. Si falta un archivo, se usa la voz del sistema. */
+const voiceEl = new Audio();
+voiceEl.setAttribute('playsinline', '');
+const audioBlobs = new Map();
+let voiceUnlocked = false;
+let silentUrl = null;
+function unlockVoice() { // iOS: el primer play() debe ocurrir dentro de un toque; después ya se puede reproducir libremente
+  if (voiceUnlocked) return;
+  voiceUnlocked = true;
+  silentUrl = silentUrl || silentWavUrl();
+  voiceEl.src = silentUrl;
+  voiceEl.play().then(() => { if (voiceEl.src === silentUrl) voiceEl.pause(); }).catch(() => { voiceUnlocked = false; });
+}
+function fetchAudio(key) {
+  if (!audioBlobs.has(key)) {
+    audioBlobs.set(key, fetch('audio/' + key + '.mp3')
+      .then((r) => { if (!r.ok) throw new Error(r.status); return r.blob(); })
+      .then((b) => URL.createObjectURL(b))
+      .catch((e) => { audioBlobs.delete(key); throw e; }));
+  }
+  return audioBlobs.get(key);
+}
+const preloadItem = (it) => { fetchAudio(audioKey(audioText(it))).catch(() => {}); };
+function sayItem(it) {
+  if (!it) return;
+  if (ttsOK()) speechSynthesis.cancel();
+  fetchAudio(audioKey(audioText(it)))
+    .then((url) => { voiceEl.src = url; voiceEl.currentTime = 0; return voiceEl.play(); })
+    .catch(() => speak(sayText(it)));
+}
 
 /* ---------- repetición espaciada ---------- */
 function newLeft() {
@@ -393,13 +442,14 @@ function renderCard() {
       <div class="info">${itemInfo(it)}</div>
       <button class="audio" data-act="say" data-id="${esc(it.id)}" aria-label="Escuchar">🔊 Escuchar</button>
       <div class="foot"><button class="btn primary" data-act="next">Entendido</button></div>`;
-    if (S.autoAudio) speak(sayText(it));
+    if (S.autoAudio) sayItem(it);
     return;
   }
 
   if (c.type === 'price') return renderPrice(c);
 
   const it = ITEMS[c.id];
+  preloadItem(it);
   const type = c.qt || (c.qt = quizType(it));
   const tag = SES.isNew.has(it.id) && !S.items[it.id] ? '<div class="tag new">Nuevo</div>' : '<div class="tag">Repaso</div>';
 
@@ -444,7 +494,7 @@ function renderCard() {
         jpOpts && showRo && type !== 'j2r' ? `<small>${esc(o.ro)}</small>` : ''}${type === 'j2r' && showRo ? `<small>${esc(o.ro)}</small>` : ''}</button>`).join('')}
     </div>
     <div class="feedback" id="fb" hidden></div>`;
-  if (type === 'a2e') speak(sayText(it));
+  if (type === 'a2e') sayItem(it);
 }
 
 function answer(k) {
@@ -491,7 +541,7 @@ function reveal() {
     <p class="hint">¿Te ha salido?</p>
     <div class="two grade"><button class="btn ko" data-act="self" data-ok="0">No me salía</button>
     <button class="btn ok" data-act="self" data-ok="1">Lo sabía</button></div>`;
-  if (S.autoAudio) speak(sayText(it));
+  if (S.autoAudio) sayItem(it);
   fb.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 function selfGrade(ok) {
@@ -543,7 +593,7 @@ function showFeedback(c, it, ok, undone = false) {
     <div class="info small">${itemInfo(it, { big: false })}</div>
     <div class="foot"><button class="audio" data-act="say" data-id="${esc(it.id)}" aria-label="Escuchar">🔊</button>
     <button class="btn primary" data-act="next">Continuar</button></div>${undo}`;
-  if (S.autoAudio && c.qt !== 'a2e' && !undone) speak(sayText(it));
+  if (S.autoAudio && c.qt !== 'a2e' && !undone) sayItem(it);
   fb.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -793,7 +843,7 @@ function renderAjustes() {
     </section>
     <section class="block"><h3>Zona peligrosa</h3>
       <button class="btn danger" data-act="reset">Borrar todo el progreso</button></section>
-    <p class="muted center small">日本語 · v4</p>`;
+    <p class="muted center small">日本語 · v5</p>`;
 }
 
 const isStandalone = () => window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
@@ -839,7 +889,7 @@ document.addEventListener('click', (e) => {
     case 'free': startSession({ mode: 'free' }); break;
     case 'price': startSession({ mode: 'price', listen: false }); break;
     case 'pricelisten': startSession({ mode: 'price', listen: true }); break;
-    case 'say': speak(sayText(ITEMS[b.dataset.id])); break;
+    case 'say': sayItem(ITEMS[b.dataset.id]); break;
     case 'sayprice': { const c = SES && SES.q[SES.i]; if (c && c.n) speak(readYen(c.n).kana, 0.9); break; }
     case 'ans': answer(+b.dataset.k); break;
     case 'reveal': reveal(); break;
@@ -888,7 +938,7 @@ function openShow(id) {
       <button class="btn primary" data-act="closeshow">Cerrar</button></div>`;
   $('#show').hidden = false;
   document.body.classList.add('in-session');
-  speak(sayText(it));
+  sayItem(it);
 }
 function closeShow() {
   $('#show').hidden = true;
