@@ -215,3 +215,35 @@ main { padding: 4px 16px 24px; max-width: 560px; margin: 0 auto; }
 
 @media (hover: hover) { .opt:not(:disabled):hover, .prow:hover, .kcell:hover { border-color: var(--accent); } .prow:hover { background: var(--chip); } }
 @media (prefers-reduced-motion: reduce) { .stamp { animation: none; } .progress i { transition: none; } }
+
+/* Recuerdo activo, respuesta escrita y deshacer */
+.hint { text-align: center; color: var(--muted); margin: 0 0 12px; }
+.feedback.reveal { background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
+.feedback.reveal .audio { margin-bottom: 14px; }
+.grade { margin-top: 4px; }
+.btn.ok { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); }
+.btn.ko { background: var(--ko-bg); border-color: var(--ko); color: var(--ko); }
+.typed { display: grid; gap: 10px; }
+.typed input { width: 100%; padding: 14px; border-radius: 10px; border: 2px solid var(--line); background: var(--surface); color: var(--ink);
+  font: 700 1.4rem var(--ui); text-align: center; }
+.typed input:focus { border-color: var(--accent); outline: none; }
+.undo { display: block; margin: 14px auto 0; border: 0; background: none; color: var(--muted); text-decoration: underline; font-size: .95rem; padding: 8px; }
+.cta-note { text-align: center; font-size: .9rem; color: var(--muted); margin: 6px auto 0; max-width: 36ch; }
+.form-hint { margin: 2px 0 0 30px; }
+
+/* Modo «enseñar» en Frases */
+#show { position: fixed; inset: 0; z-index: 30; background: var(--surface); display: flex; flex-direction: column;
+  padding: calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 16px); }
+#show[hidden] { display: none; }
+.show-in { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; gap: 10px; min-height: 0; overflow-y: auto; }
+.show-jp { font: 700 3rem/1.25 var(--jp); overflow-wrap: anywhere; word-break: keep-all; }
+.show-jp.xl { font-size: 5.5rem; } .show-jp.l { font-size: 3.2rem; } .show-jp.m { font-size: 2.4rem; } .show-jp.s { font-size: 1.9rem; }
+.show-kana { font: 500 1.4rem/1.4 var(--jp); color: var(--muted); }
+.show-es { margin-top: 18px; font-weight: 700; font-size: 1.15rem; }
+.show-ro { color: var(--accent); }
+.show-foot { display: flex; gap: 10px; align-items: center; }
+.show-foot .audio { margin: 0; flex: none; }
+.show-foot .btn { flex: 1; }
+
+.toast { position: fixed; left: 16px; right: 16px; top: calc(env(safe-area-inset-top) + 12px); z-index: 40;
+  max-width: 520px; margin: 0 auto; background: var(--ink); color: var(--bg); padding: 12px 14px; border-radius: 10px; font-size: .95rem; }

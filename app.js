@@ -82,8 +82,13 @@ function loadVoices() {
 }
 if ('speechSynthesis' in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
 const ttsOK = () => 'speechSynthesis' in window;
+let voiceWarned = false;
 function speak(text, rate = 0.85) {
   if (!ttsOK() || !text) return;
+  if (!jaVoice && speechSynthesis.getVoices().length && !voiceWarned) {
+    voiceWarned = true;
+    toast('Este dispositivo no tiene voz japonesa, así que el audio puede sonar mal. Pon una en los ajustes de accesibilidad (contenido leído).');
+  }
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text.replace(/[〜~]/g, ''));
   u.lang = 'ja-JP'; u.rate = rate;
@@ -103,6 +108,27 @@ function nextNew(n) {
   return out;
 }
 const dueIds = () => { const t = today(); return Object.keys(S.items).filter((id) => ITEMS[id] && S.items[id].due <= t); };
+
+/* Sesiones cortas: como mucho REVIEW_CAP repasos por sesión, y si hay atraso se frenan las nuevas
+   para no entrar en una bola de nieve de repasos. */
+const REVIEW_CAP = 50;
+function newToday() {
+  const d = dueIds().length;
+  const n = newLeft();
+  return d >= 50 ? 0 : d >= 25 ? Math.ceil(n / 2) : n;
+}
+
+/* Antes del viaje: nada se programa más allá de la fecha, y todo lo aprendido
+   recibe un repaso en las últimas tres semanas. */
+function scheduleDue(t, iv) {
+  const d = tripDays();
+  const due = t + iv;
+  if (d === null || d <= 1) return due;
+  const trip = t + d;
+  if (due < trip - 7) return due;
+  if (t < trip - 21) return trip - 21 + Math.floor(Math.random() * 14);
+  return Math.max(t + 1, Math.min(due, trip - 1));
+}
 
 function markActivity() {
   const t = today();
@@ -130,7 +156,7 @@ function grade(id, ok, rec) {
       st.ef = Math.min(3, st.ef + 0.05);
     }
     st.reps++;
-    st.due = t + st.iv;
+    st.due = scheduleDue(t, st.iv);
   } else {
     if (!rec.failed) { st.lapses++; st.ef = Math.max(1.3, st.ef - 0.2); }
     rec.failed = true;
@@ -141,15 +167,53 @@ function grade(id, ok, rec) {
 }
 const level = (id) => { const st = S.items[id]; return !st ? 0 : st.iv >= 7 ? 2 : 1; };
 
-/* ---------- preguntas ---------- */
+/* ---------- preguntas ----------
+   Al principio se reconoce entre opciones; en cuanto algo se conoce, hay que recordarlo:
+   escribir la lectura de un kana (type) o decir la frase y autoevaluarse (re2j / rj2e). */
 function quizType(it) {
   const r = S.items[it.id] ? S.items[it.id].reps : 0;
-  if (it.kind === 'kana') return r < 2 ? 'k2r' : pick(['k2r', 'k2r', 'r2k']);
-  if (it.kind === 'kanji') return r < 1 ? 'j2e' : pick(['j2e', 'e2j', 'j2r']);
-  const t = r < 1 ? ['j2e'] : ['j2e', 'e2j'];
-  if (r >= 2 && ttsOK()) t.push('a2e');
+  if (it.kind === 'kana') return r < 2 ? 'k2r' : pick(['type', 'type', 'k2r', 'r2k']);
+  if (it.kind === 'kanji') return r < 1 ? 'j2e' : r < 3 ? pick(['j2e', 'e2j', 'j2r']) : pick(['rj2e', 'rj2e', 'e2j']);
+  if (r < 1) return 'j2e';
+  if (r < 3) return pick(['j2e', 'e2j', 're2j']);
+  const t = ['re2j', 're2j', 'rj2e'];
+  if (ttsOK()) t.push('a2e');
   return pick(t);
 }
+const isRecall = (t) => t === 're2j' || t === 'rj2e';
+const hasOptions = (t) => !isRecall(t) && t !== 'type';
+
+/* Respuestas escritas: se aceptan las variantes habituales de rōmaji. */
+const RO_ALT = { shi: ['si'], chi: ['ti'], tsu: ['tu'], fu: ['hu'], ji: ['zi'], wo: ['o'], n: ['nn'],
+  sha: ['sya'], shu: ['syu'], sho: ['syo'], cha: ['tya', 'cya'], chu: ['tyu', 'cyu'], cho: ['tyo', 'cyo'],
+  ja: ['zya', 'jya'], ju: ['zyu', 'jyu'], jo: ['zyo', 'jyo'] };
+function roAccept(ro) {
+  const base = ro.toLowerCase().split(/[()\s]+/).filter(Boolean);
+  const out = new Set(base);
+  base.forEach((b) => (RO_ALT[b] || []).forEach((a) => out.add(a)));
+  return out;
+}
+
+/* El rōmaji se retira solo cuando ya dominas todos los kana de esa frase. */
+const KANA_ID = {};
+ALL_IDS.forEach((id) => { const it = ITEMS[id]; if (it.kind === 'kana' && it.jp.length === 1) KANA_ID[it.jp] = id; });
+function kanaKnown(text) {
+  if (!text || /[一-鿿]/.test(text)) return false;
+  let any = false;
+  for (const ch of text) {
+    const id = KANA_ID[ch];
+    if (!id) continue;
+    any = true;
+    if (level(id) < 2) return false;
+  }
+  return any;
+}
+const showRoFor = (it) => S.romaji && it.kind !== 'kana' && !kanaKnown(it.kana || it.jp);
+
+/* Kana que se confunden entre sí: salen juntos como opciones para aprender a distinguirlos. */
+const CONFUSE = ['ぬめ', 'わねれ', 'るろ', 'はほ', 'きさち', 'いり', 'こに', 'あお', 'シツ', 'ソン', 'クケタ', 'ウワフ', 'アマ', 'コユ', 'チテ', 'ヌス', 'ノメ']
+  .map((s) => [...s]);
+const confusersOf = (ch) => (CONFUSE.find((g) => g.includes(ch)) || []).filter((c) => c !== ch);
 const sameKind = (a, b) => a.kind === b.kind && (a.kind !== 'kana' || a.script === b.script);
 
 function optionText(it, type) {
@@ -168,9 +232,11 @@ function buildOptions(it, type) {
   const sameUnit = shuffle(pool.filter((o) => o.unit === it.unit && ok(o)));
   const seen = shuffle(pool.filter((o) => o.unit !== it.unit && S.items[o.id] && ok(o)));
   const rest = shuffle(pool.filter((o) => o.unit !== it.unit && !S.items[o.id] && ok(o)));
+  const twins = it.kind === 'kana' ? confusersOf(it.jp).map((ch) => ITEMS[it.script + ':' + ch])
+    .filter((o) => o && (S.items[o.id] || o.unit === it.unit) && ok(o)) : [];
   const picked = [];
   const texts = new Set([ans]);
-  for (const o of [...sameUnit.slice(0, 2), ...seen, ...sameUnit.slice(2), ...rest]) {
+  for (const o of [...twins, ...sameUnit.slice(0, 2), ...seen, ...sameUnit.slice(2), ...rest]) {
     if (picked.length >= 3) break;
     const tx = optionText(o, type);
     if (!texts.has(tx)) { texts.add(tx); picked.push(o); }
@@ -226,16 +292,25 @@ function priceDistractors(n) {
 /* ---------- sesión ---------- */
 let SES = null;
 
+/* Muestreo ponderado sin reemplazo: lo que más fallas sale más (Efraimidis-Spirakis). */
+function weakSample(ids, n) {
+  return ids.map((id) => {
+    const st = S.items[id];
+    const w = 1 + (st.lapses || 0) * 2 + (st.ef < 2 ? 2 : 0) + (st.iv < 7 ? 1 : 0);
+    return { id, k: Math.pow(Math.random(), 1 / w) };
+  }).sort((a, b) => b.k - a.k).slice(0, n).map((p) => p.id);
+}
+
 function startSession(opts = {}) {
   const q = [];
   if (opts.mode === 'price') {
     for (let i = 0; i < 10; i++) q.push({ type: 'price', listen: opts.listen });
   } else if (opts.mode === 'free') {
-    const seen = shuffle(Object.keys(S.items).filter((id) => ITEMS[id])).slice(0, 15);
-    seen.forEach((id) => q.push({ type: 'quiz', id }));
+    weakSample(Object.keys(S.items).filter((id) => ITEMS[id]), 15).forEach((id) => q.push({ type: 'quiz', id }));
   } else {
-    const due = shuffle(dueIds()).slice(0, 60);
-    const fresh = nextNew(opts.extra != null ? opts.extra : newLeft());
+    /* Primero lo más atrasado; el resto queda para otra sesión. */
+    const due = shuffle(dueIds().sort((a, b) => S.items[a].due - S.items[b].due).slice(0, REVIEW_CAP));
+    const fresh = nextNew(opts.extra != null ? opts.extra : newToday());
     due.forEach((id) => q.push({ type: 'quiz', id }));
     for (let i = 0; i < fresh.length; i += 3) {
       const blk = fresh.slice(i, i + 3);
@@ -295,9 +370,32 @@ function renderCard() {
 
   const it = ITEMS[c.id];
   const type = c.qt || (c.qt = quizType(it));
+  const tag = SES.isNew.has(it.id) && !S.items[it.id] ? '<div class="tag new">Nuevo</div>' : '<div class="tag">Repaso</div>';
+
+  if (isRecall(type)) {
+    const prompt = type === 're2j'
+      ? `<div class="ask">¿Cómo se dice en japonés?</div><div class="es big-es">${esc(it.es)}</div>`
+      : `<div class="ask">${it.kind === 'kanji' ? '¿Cómo se lee y qué significa?' : '¿Qué significa?'}</div><div class="jp ${it.jp.length > 8 ? 'mid' : 'big'}">${esc(it.jp)}</div>`;
+    box.innerHTML = `${tag}<div class="prompt">${prompt}</div>
+      <p class="hint">${type === 're2j' ? 'Dilo en voz alta antes de mirar.' : 'Piensa la respuesta antes de mirar.'}</p>
+      <button class="btn primary" data-act="reveal">Mostrar respuesta</button>
+      <div class="feedback reveal" id="fb" hidden></div>`;
+    return;
+  }
+
+  if (type === 'type') {
+    box.innerHTML = `${tag}<div class="prompt"><div class="ask">Escribe cómo se lee</div><div class="jp huge">${esc(it.jp)}</div></div>
+      <form class="typed" id="typedf"><input id="typed" type="text" inputmode="latin" autocomplete="off" autocapitalize="off"
+        autocorrect="off" spellcheck="false" enterkeyhint="done" placeholder="en rōmaji, p. ej. ka" aria-label="Lectura en rōmaji">
+        <button class="btn primary">Comprobar</button></form>
+      <div class="feedback" id="fb" hidden></div>`;
+    $('#typed').focus();
+    return;
+  }
+
   const opts = c.opts || (c.opts = buildOptions(it, type));
   let prompt = '';
-  const showRo = S.romaji && it.kind !== 'kana';
+  const showRo = showRoFor(it);
   if (type === 'k2r') prompt = `<div class="ask">¿Cómo se lee?</div><div class="jp huge">${esc(it.jp)}</div>`;
   else if (type === 'r2k') prompt = `<div class="ask">¿Cuál es «${esc(it.ro)}»?</div>`;
   else if (type === 'j2e') prompt = `<div class="ask">¿Qué significa?</div><div class="jp ${it.jp.length > 8 ? 'mid' : 'big'}">${esc(it.jp)}</div>` +
@@ -308,11 +406,11 @@ function renderCard() {
 
   const jpOpts = type === 'r2k' || type === 'e2j' || type === 'j2r';
   box.innerHTML = `
-    ${SES.isNew.has(it.id) && !S.items[it.id] ? '<div class="tag new">Nuevo</div>' : '<div class="tag">Repaso</div>'}
+    ${tag}
     <div class="prompt">${prompt}</div>
     <div class="opts ${jpOpts ? 'jp-opts' : ''} ${type === 'r2k' ? 'kana-opts' : ''}">
       ${opts.map((o, k) => `<button class="opt" data-act="ans" data-k="${k}">${esc(optionText(o, type))}${
-        jpOpts && showRo && type !== 'j2r' ? `<small>${esc(o.ro)}</small>` : ''}${type === 'j2r' && S.romaji ? `<small>${esc(o.ro)}</small>` : ''}</button>`).join('')}
+        jpOpts && showRo && type !== 'j2r' ? `<small>${esc(o.ro)}</small>` : ''}${type === 'j2r' && showRo ? `<small>${esc(o.ro)}</small>` : ''}</button>`).join('')}
     </div>
     <div class="feedback" id="fb" hidden></div>`;
   if (type === 'a2e') speak(sayText(it));
@@ -328,23 +426,93 @@ function answer(k) {
   const btns = [...document.querySelectorAll('.opt')];
   btns.forEach((b, j) => { b.disabled = true; if (c.opts[j].id === it.id) b.classList.add('right'); });
   if (!ok) btns[k].classList.add('wrong');
+  gradeAnswer(c, it, ok);
+  showFeedback(c, it, ok);
+}
 
+/* Respuesta escrita (kana → rōmaji). */
+function answerTyped() {
+  if (SES.answered) return;
+  const inp = $('#typed');
+  const val = inp.value.trim().toLowerCase().replace(/\s+/g, '');
+  if (!val) { inp.focus(); return; }
+  SES.answered = true;
+  inp.disabled = true;
+  const c = SES.q[SES.i];
+  const it = ITEMS[c.id];
+  const ok = roAccept(it.ro).has(val);
+  c.typed = val;
+  gradeAnswer(c, it, ok);
+  showFeedback(c, it, ok);
+}
+
+/* Recuerdo libre: se muestra la respuesta y uno mismo dice si la sabía. */
+function reveal() {
+  if (SES.answered) return;
+  SES.answered = true;
+  const c = SES.q[SES.i];
+  const it = ITEMS[c.id];
+  $('[data-act=reveal]').remove();
+  const fb = $('#fb');
+  fb.hidden = false;
+  fb.innerHTML = `<div class="info small">${itemInfo(it, { big: false })}</div>
+    <button class="audio" data-act="say" data-id="${esc(it.id)}" aria-label="Escuchar">🔊 Escuchar</button>
+    <p class="hint">¿Te ha salido?</p>
+    <div class="two grade"><button class="btn ko" data-act="self" data-ok="0">No me salía</button>
+    <button class="btn ok" data-act="self" data-ok="1">Lo sabía</button></div>`;
+  if (S.autoAudio) speak(sayText(it));
+  fb.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+function selfGrade(ok) {
+  const c = SES.q[SES.i];
+  const it = ITEMS[c.id];
+  if (c.graded) return;
+  c.graded = true;
+  gradeAnswer(c, it, ok);
+  SES.i++; renderCard(); $('#session').scrollTo(0, 0);
+}
+
+function gradeAnswer(c, it, ok) {
   const rec = SES.rec[it.id] || (SES.rec[it.id] = { isNew: SES.isNew.has(it.id), failed: false });
+  c.undo = { st: S.items[it.id] ? { ...S.items[it.id] } : null, rec: { ...rec }, newDay: S.newDay, newCount: S.newCount, reIdx: -1 };
   if (!SES.practice) grade(it.id, ok, rec);
-  else markActivity(), save();
+  else { markActivity(); save(); }
   if (ok) SES.right++; else SES.wrong++;
   if (!ok) {
-    const again = { type: 'quiz', id: it.id };
-    SES.q.splice(Math.min(SES.q.length, SES.i + 4), 0, again);
+    const at = Math.min(SES.q.length, SES.i + 4);
+    SES.q.splice(at, 0, { type: 'quiz', id: it.id });
+    c.undo.reIdx = at;
   }
+}
+
+/* Deshacer un fallo por pulsar o escribir sin querer: cuenta como acierto. */
+function undoWrong() {
+  const c = SES.q[SES.i];
+  const u = c && c.undo;
+  if (!u || c.undone) return;
+  const it = ITEMS[c.id];
+  c.undone = true;
+  if (u.st) S.items[it.id] = u.st; else delete S.items[it.id];
+  S.newDay = u.newDay; S.newCount = u.newCount;
+  SES.rec[it.id] = u.rec;
+  if (u.reIdx >= 0) SES.q.splice(u.reIdx, 1);
+  SES.wrong--;
+  save();
+  gradeAnswer(c, it, true);
+  showFeedback(c, it, true, true);
+}
+
+function showFeedback(c, it, ok, undone = false) {
   const fb = $('#fb');
   fb.hidden = false;
   fb.className = 'feedback ' + (ok ? 'ok' : 'ko');
-  fb.innerHTML = `<div class="verdict">${ok ? '¡Correcto!' : 'Casi… volverá a salir'}</div>
+  const typed = c.qt === 'type' && !ok ? `<p class="center small">Escribiste «${esc(c.typed)}»</p>` : '';
+  const undo = !ok ? `<button class="undo" data-act="undo">${c.qt === 'type' ? 'Lo sabía, me equivoqué al escribir' : 'Me equivoqué al pulsar'}</button>` : '';
+  fb.innerHTML = `<div class="verdict">${undone ? 'Corregido: cuenta como acierto' : ok ? '¡Correcto!' : 'Casi… volverá a salir'}</div>${typed}
     <div class="info small">${itemInfo(it, { big: false })}</div>
-    <div class="foot"><button class="audio" data-act="say" data-id="${esc(it.id)}">🔊</button>
-    <button class="btn primary" data-act="next">Continuar</button></div>`;
-  if (S.autoAudio && c.qt !== 'a2e') speak(sayText(it));
+    <div class="foot"><button class="audio" data-act="say" data-id="${esc(it.id)}" aria-label="Escuchar">🔊</button>
+    <button class="btn primary" data-act="next">Continuar</button></div>${undo}`;
+  if (S.autoAudio && c.qt !== 'a2e' && !undone) speak(sayText(it));
   fb.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -454,9 +622,11 @@ function renderSign(i, finished) {
 }
 
 function renderHoy() {
-  const due = dueIds().length;
-  const fresh = nextNew(newLeft()).length;
-  const mins = Math.max(1, Math.ceil((due * 8 + fresh * 30) / 60));
+  const dueAll = dueIds().length;
+  const due = Math.min(dueAll, REVIEW_CAP);
+  const fresh = nextNew(newToday()).length;
+  const braked = fresh < nextNew(newLeft()).length;
+  const mins = Math.max(1, Math.ceil((due * 10 + fresh * 30) / 60));
   const next = nextNew(1)[0];
   const stats = sectionStats();
   const totalSeen = Object.keys(S.items).filter((id) => ITEMS[id]).length;
@@ -464,8 +634,12 @@ function renderHoy() {
   let cta;
   if (due || fresh) {
     const parts = [due && plural(due, 'repaso', 'repasos'), fresh && plural(fresh, 'nueva', 'nuevas')].filter(Boolean);
+    const notes = [];
+    if (dueAll > REVIEW_CAP) notes.push(`Quedarán ${dueAll - REVIEW_CAP} repasos para otra sesión.`);
+    if (braked) notes.push(fresh ? 'Hoy hay menos nuevas para ponerte al día con los repasos.' : 'Hoy no hay nuevas: primero toca ponerse al día con los repasos.');
     cta = `<button class="btn primary xl" data-act="start">Empezar sesión</button>
-      <p class="cta-sub">${parts.join(' y ')}, unos ${mins} min</p>`;
+      <p class="cta-sub">${parts.join(' y ')}, unos ${mins} min</p>
+      ${notes.length ? `<p class="cta-note">${notes.join(' ')}</p>` : ''}`;
   } else {
     cta = `<p class="done">Hecho por hoy. Mañana tendrás repasos nuevos.</p>
       ${next ? '<button class="btn" data-act="extra">Aprender 5 más</button>' : ''}`;
@@ -506,14 +680,15 @@ function renderFrases() {
   units.forEach((u) => { const c = u.cat || u.sec; if (!cats.includes(c)) cats.push(c); });
   const norm = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   const match = (it) => !q || [it.jp, it.kana, it.kj, it.ro, it.es].some((f) => f && norm(f).includes(norm(q)));
-  let html = `<div class="search"><input id="q" type="search" placeholder="Buscar en español, rōmaji o japonés…" value="${esc(PHRASE_Q)}" autocomplete="off"></div>`;
+  let html = `<div class="search"><input id="q" type="search" placeholder="Buscar en español, rōmaji o japonés…" value="${esc(PHRASE_Q)}" autocomplete="off"></div>
+    <p class="muted small">Toca una frase para verla en grande y enseñársela a alguien.</p>`;
   let any = false;
   cats.forEach((cat) => {
     const its = units.filter((u) => (u.cat || u.sec) === cat).flatMap((u) => u.items).map((id) => ITEMS[id]).filter(match);
     if (!its.length) return;
     any = true;
     html += `<h3 class="cat">${esc(cat)}</h3><div class="plist">` + its.map((it) => `
-      <button class="prow" data-act="say" data-id="${esc(it.id)}">
+      <button class="prow" data-act="show" data-id="${esc(it.id)}">
         <div class="pj">${esc(it.jp)}${it.kj ? ` <span class="muted">${esc(it.kj)}</span>` : ''}${S.items[it.id] ? '<i class="lv lv' + level(it.id) + '"></i>' : ''}</div>
         ${it.kana && it.kana !== it.jp && it.kind !== 'vocab' ? `<div class="pk">${esc(it.kana)}</div>` : ''}
         <div class="pr">${esc(it.ro)}</div>
@@ -553,7 +728,7 @@ function renderPractica() {
       <button class="btn" data-act="pricelisten" ${ttsOK() ? '' : 'disabled'}>Escuchar precios</button></div>
     </section>
     <section class="block"><h3>Repaso libre</h3>
-      <p class="muted">15 preguntas al azar de lo que ya has visto. No cambia tu calendario de repasos.</p>
+      <p class="muted">15 preguntas de lo que ya has visto, sobre todo de lo que más te cuesta. No cambia tu calendario de repasos.</p>
       <button class="btn" data-act="free" ${seen >= 4 ? '' : 'disabled'}>Practicar</button>
       ${seen < 4 ? '<p class="muted small">Disponible cuando hayas aprendido algo en «Hoy».</p>' : ''}
     </section>
@@ -574,7 +749,8 @@ function renderAjustes() {
       <label>Fecha del viaje<input type="date" id="trip" value="${esc(S.trip)}"></label>
       <label>Cosas nuevas al día
         <select id="npd">${[3, 5, 7, 10, 15].map((n) => `<option ${S.newPerDay === n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
-      <label class="chk"><input type="checkbox" id="romaji" ${S.romaji ? 'checked' : ''}> Mostrar rōmaji en frases</label>
+      <label class="chk"><input type="checkbox" id="romaji" ${S.romaji ? 'checked' : ''}> Mostrar rōmaji en las preguntas</label>
+      <p class="muted small form-hint">Se oculta solo en las frases cuyos kana ya dominas.</p>
       <label class="chk"><input type="checkbox" id="auto" ${S.autoAudio ? 'checked' : ''}> Audio automático</label>
       ${ttsOK() ? `<button class="btn" data-act="testvoice">🔊 Probar voz${jaVoice ? ' (' + esc(jaVoice.name) + ')' : ''}</button>` : '<p class="muted">Este navegador no tiene voz japonesa.</p>'}
     </section>
@@ -585,7 +761,7 @@ function renderAjustes() {
     </section>
     <section class="block"><h3>Zona peligrosa</h3>
       <button class="btn danger" data-act="reset">Borrar todo el progreso</button></section>
-    <p class="muted center small">日本語 · v1</p>`;
+    <p class="muted center small">日本語 · v3</p>`;
 }
 
 const isStandalone = () => window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
@@ -633,6 +809,11 @@ document.addEventListener('click', (e) => {
     case 'say': speak(sayText(ITEMS[b.dataset.id])); break;
     case 'sayprice': { const c = SES && SES.q[SES.i]; if (c && c.n) speak(readYen(c.n).kana, 0.9); break; }
     case 'ans': answer(+b.dataset.k); break;
+    case 'reveal': reveal(); break;
+    case 'self': selfGrade(b.dataset.ok === '1'); break;
+    case 'undo': undoWrong(); break;
+    case 'show': openShow(b.dataset.id); break;
+    case 'closeshow': closeShow(); break;
     case 'next': SES.i++; renderCard(); $('#session').scrollTo(0, 0); break;
     case 'close': endSession(); break;
     case 'quit':
@@ -651,6 +832,45 @@ document.addEventListener('click', (e) => {
     default: break;
   }
 });
+
+document.addEventListener('submit', (e) => {
+  if (e.target.id === 'typedf') { e.preventDefault(); answerTyped(); }
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#show').hidden) closeShow(); });
+
+/* Modo «enseñar»: la frase en grande, para mostrarla en el restaurante, el taxi o la tienda. */
+function openShow(id) {
+  const it = ITEMS[id];
+  const main = it.kj || it.jp;
+  const sub = it.kj ? it.jp : it.kana && it.kana !== it.jp ? it.kana : '';
+  const n = [...main].length;
+  const size = n <= 3 ? 'xl' : n <= 5 ? 'l' : n <= 9 ? 'm' : 's';
+  $('#show').innerHTML = `<div class="show-in">
+      <div class="show-jp ${size}" lang="ja">${esc(main)}</div>
+      ${sub ? `<div class="show-kana" lang="ja">${esc(sub)}</div>` : ''}
+      <div class="show-es">${esc(it.es)}</div>
+      <div class="show-ro">${esc(it.ro)}</div>
+    </div>
+    <div class="show-foot"><button class="audio" data-act="say" data-id="${esc(id)}">🔊 Escuchar</button>
+      <button class="btn primary" data-act="closeshow">Cerrar</button></div>`;
+  $('#show').hidden = false;
+  document.body.classList.add('in-session');
+  speak(sayText(it));
+}
+function closeShow() {
+  $('#show').hidden = true;
+  if (!SES) document.body.classList.remove('in-session');
+}
+
+function toast(msg) {
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.setAttribute('role', 'status');
+  el.textContent = msg;
+  el.addEventListener('click', () => el.remove());
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 6000);
+}
 
 function doExport() {
   const data = JSON.stringify(S);
