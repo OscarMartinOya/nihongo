@@ -1,5 +1,5 @@
 /* Service worker: la app funciona sin conexión. Sube VERSION al publicar cambios. */
-const VERSION = 'nihongo-v3';
+const VERSION = 'nihongo-v4';
 const ASSETS = ['./', 'index.html', 'styles.css', 'data.js', 'app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
   'fonts/barlow-sc-500.woff2', 'fonts/barlow-sc-700.woff2'];

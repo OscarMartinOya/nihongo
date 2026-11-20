@@ -13,7 +13,7 @@ const toKata = (s) => s.replace(/[ぁ-ゖ]/g, (c) => String.fromCharCode(c.charC
 /* ---------- estado ---------- */
 const KEY = 'nihongo-v1';
 const defaults = () => ({
-  v: 1, items: {}, trip: '2027-10-01', newPerDay: 7, romaji: true, autoAudio: true,
+  v: 1, items: {}, trip: '2027-10-01', newPerDay: 7, romaji: true, autoAudio: true, silentOk: true,
   streak: 0, best: 0, lastDay: null, hist: {}, newDay: null, newCount: 0,
 });
 let S;
@@ -82,6 +82,37 @@ function loadVoices() {
 }
 if ('speechSynthesis' in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
 const ttsOK = () => 'speechSynthesis' in window;
+
+/* iOS: que el audio suene aunque el iPhone esté en silencio. Safari trata la voz del sistema como
+   sonido secundario y el interruptor la apaga; se pide sesión de «reproducción» (Audio Session API,
+   iOS 17+) y se mantiene un audio mudo en bucle, que es lo que Safari considera reproducción. */
+let silentEl = null;
+function silentWavUrl() {
+  const n = 4000, buf = new ArrayBuffer(44 + n), v = new DataView(buf);
+  const w = (o, str) => [...str].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  w(0, 'RIFF'); v.setUint32(4, 36 + n, true); w(8, 'WAVE'); w(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+  w(36, 'data'); v.setUint32(40, n, true);
+  for (let i = 0; i < n; i++) v.setUint8(44 + i, 128);
+  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+}
+function unlockAudio() {
+  if (!S.silentOk || document.hidden) return;
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) { /* no disponible */ }
+  if (!silentEl) {
+    silentEl = new Audio(silentWavUrl());
+    silentEl.loop = true;
+    silentEl.setAttribute('playsinline', '');
+  }
+  if (silentEl.paused) silentEl.play().catch(() => {});
+}
+function stopSilent() {
+  if (silentEl && !silentEl.paused) silentEl.pause();
+  try { if (navigator.audioSession) navigator.audioSession.type = 'auto'; } catch (e) { /* no disponible */ }
+}
+['pointerdown', 'touchend', 'keydown'].forEach((ev) => document.addEventListener(ev, unlockAudio, { capture: true, passive: true }));
+document.addEventListener('visibilitychange', () => { if (document.hidden) stopSilent(); });
 let voiceWarned = false;
 function speak(text, rate = 0.85) {
   if (!ttsOK() || !text) return;
@@ -752,6 +783,7 @@ function renderAjustes() {
       <label class="chk"><input type="checkbox" id="romaji" ${S.romaji ? 'checked' : ''}> Mostrar rōmaji en las preguntas</label>
       <p class="muted small form-hint">Se oculta solo en las frases cuyos kana ya dominas.</p>
       <label class="chk"><input type="checkbox" id="auto" ${S.autoAudio ? 'checked' : ''}> Audio automático</label>
+      <label class="chk"><input type="checkbox" id="silentok" ${S.silentOk ? 'checked' : ''}> Sonar aunque el iPhone esté en silencio</label>
       ${ttsOK() ? `<button class="btn" data-act="testvoice">🔊 Probar voz${jaVoice ? ' (' + esc(jaVoice.name) + ')' : ''}</button>` : '<p class="muted">Este navegador no tiene voz japonesa.</p>'}
     </section>
     <section class="block"><h3>Copia de seguridad</h3>
@@ -761,7 +793,7 @@ function renderAjustes() {
     </section>
     <section class="block"><h3>Zona peligrosa</h3>
       <button class="btn danger" data-act="reset">Borrar todo el progreso</button></section>
-    <p class="muted center small">日本語 · v3</p>`;
+    <p class="muted center small">日本語 · v4</p>`;
 }
 
 const isStandalone = () => window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
@@ -786,6 +818,7 @@ function render() {
     $('#npd').addEventListener('change', (e) => { S.newPerDay = +e.target.value; save(); });
     $('#romaji').addEventListener('change', (e) => { S.romaji = e.target.checked; save(); });
     $('#auto').addEventListener('change', (e) => { S.autoAudio = e.target.checked; save(); });
+    $('#silentok').addEventListener('change', (e) => { S.silentOk = e.target.checked; save(); if (S.silentOk) unlockAudio(); else stopSilent(); });
   }
 }
 
